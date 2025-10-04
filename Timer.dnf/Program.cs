@@ -3,12 +3,15 @@ using System.Drawing;
 using System.Media;
 using System.Windows.Forms;
 using System.Linq;
+using System.Speech.Synthesis;
+
+using TimerType = System.Windows.Forms.Timer;
 
 namespace TimerApp
 {
     internal class TimerForm : Form
     {
-        private readonly System.Windows.Forms.Timer _timer;
+        private readonly TimerType _timer;
         private DateTime _endTime;
         private readonly double _durationSeconds;
         private readonly bool _clickThrough;
@@ -21,12 +24,22 @@ namespace TimerApp
         private readonly int? _y;
         private readonly SystemSound _endSound;
 
+        private readonly string _speakText;
+        private readonly string _speakVoice;
+        private readonly string _speakTiming;
+        private readonly string _soundTiming;
+
+        private bool _middleSoundPlayed = false;
+        private bool _middleSpeechPlayed = false;
+        private bool _endSpeechStarted = false;
+
         private const int PaddingPx = 0;
         private const int EdgeMargin = 0;
 
         public TimerForm(double seconds, int? x, int? y, float fontSize, string fontName,
                          double opacity, Color textColor, bool clickThrough, bool showClock,
-                         string pos, SystemSound endSound)
+                         string pos, SystemSound endSound,
+                         string speakText, string speakVoice, string speakTiming, string soundTiming)
         {
             _durationSeconds = Math.Max(0.0, seconds);
             _clickThrough = clickThrough;
@@ -38,6 +51,10 @@ namespace TimerApp
             _x = x;
             _y = y;
             _endSound = endSound;
+            _speakText = speakText;
+            _speakVoice = speakVoice;
+            _speakTiming = string.IsNullOrEmpty(speakTiming) ? "end" : speakTiming;
+            _soundTiming = string.IsNullOrEmpty(soundTiming) ? "end" : soundTiming;
 
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.Manual;
@@ -47,8 +64,7 @@ namespace TimerApp
             TransparencyKey = Color.Black;
             Opacity = Clamp(opacity, 0.1, 1.0);
 
-            _timer = new System.Windows.Forms.Timer();
-            _timer.Interval = _showClock ? 1000 : 100;
+            _timer = new TimerType { Interval = _showClock ? 1000 : 100 };
             _timer.Tick += Timer_Tick;
             _timer.Start();
 
@@ -69,16 +85,18 @@ namespace TimerApp
             }
         }
 
-        private static double Clamp(double value, double min, double max)
-        {
-            if (value < min) return min;
-            if (value > max) return max;
-            return value;
-        }
-
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
+
+            if (_soundTiming == "start" && _endSound != null)
+                _endSound.Play();
+
+            if (_speakTiming == "start" && !string.IsNullOrEmpty(_speakText))
+            {
+                System.Threading.Tasks.Task.Run(() => Speak(_speakText, _speakVoice, true));
+            }
+
             UpdateWindowSizeAndPosition();
             Invalidate();
         }
@@ -86,22 +104,88 @@ namespace TimerApp
         private void Timer_Tick(object sender, EventArgs e)
         {
             UpdateWindowSizeAndPosition();
+            UpdateTimedEvents();
             UpdateEndCheck();
             Invalidate();
+        }
+
+        private void UpdateTimedEvents()
+        {
+            if (_durationSeconds > 0)
+            {
+                var now = DateTime.Now;
+                var remaining = (_endTime - now).TotalSeconds;
+                var elapsed = (_durationSeconds - remaining);
+
+                if (!_middleSoundPlayed && _soundTiming == "middle" && elapsed >= _durationSeconds / 2)
+                {
+                    if (_endSound != null) _endSound.Play();
+                    _middleSoundPlayed = true;
+                }
+                if (!_middleSpeechPlayed && _speakTiming == "middle" && elapsed >= _durationSeconds / 2)
+                {
+                    if (!string.IsNullOrEmpty(_speakText))
+                    {
+                        System.Threading.Tasks.Task.Run(() => Speak(_speakText, _speakVoice, true));
+                    }
+                    _middleSpeechPlayed = true;
+                }
+            }
         }
 
         private void UpdateEndCheck()
         {
             if (_durationSeconds > 0 && DateTime.Now >= _endTime)
             {
+                if (_endSpeechStarted) return;
+                _endSpeechStarted = true;
+
+                if (_soundTiming == "end" && _endSound != null)
+                    _endSound.Play();
+
+                if (_speakTiming == "end" && !string.IsNullOrEmpty(_speakText))
+                {
+                    System.Threading.Tasks.Task.Run(() =>
+                    {
+                        Speak(_speakText, _speakVoice, true);
+                        this.Invoke((Action)(() =>
+                        {
+                            _timer.Stop();
+                            Close();
+                        }));
+                    });
+                    return;
+                }
+
                 _timer.Stop();
-                if (_endSound != null) _endSound.Play();
                 Close();
+            }
+        }
+
+        private void Speak(string text, string voice, bool sync)
+        {
+            using (var synth = new SpeechSynthesizer())
+            {
+                if (!string.IsNullOrEmpty(voice))
+                {
+                    try { synth.SelectVoice(voice); }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show("Voice select error: " + ex.Message, "Speech Error");
+                    }
+                }
+                if (sync)
+                    synth.Speak(text);
+                else
+                    synth.SpeakAsync(text);
             }
         }
 
         private string GetDisplayText()
         {
+            if (_speakTiming == "end" && _endSpeechStarted)
+                return "";
+
             if (_showClock) return DateTime.Now.ToString("HH:mm:ss");
 
             if (_durationSeconds <= 0) return "0.0s";
@@ -110,12 +194,12 @@ namespace TimerApp
             if (remaining >= 3600)
             {
                 var ts = TimeSpan.FromSeconds(remaining);
-                return string.Format("{0}:{1:D2}:{2:D2}", (int)ts.TotalHours, ts.Minutes, ts.Seconds);
+                return ((int)ts.TotalHours) + ":" + ts.Minutes.ToString("D2") + ":" + ts.Seconds.ToString("D2");
             }
             else if (remaining >= 60)
             {
                 var ts = TimeSpan.FromSeconds(remaining);
-                return string.Format("{0:D2}:{1:D2}", ts.Minutes, ts.Seconds);
+                return ts.Minutes.ToString("D2") + ":" + ts.Seconds.ToString("D2");
             }
             else
             {
@@ -142,38 +226,39 @@ namespace TimerApp
                     Width = newWidth;
                     Height = newHeight;
                 }
+
+                var screenArea = Screen.FromControl(this).WorkingArea;
+
+                int left = _x.HasValue ? _x.Value : (screenArea.Left + (screenArea.Width - Width) / 2);
+                int top = _y.HasValue ? _y.Value : (screenArea.Top + (screenArea.Height - Height) / 2);
+
+                string posLower = (_pos ?? "").ToLowerInvariant();
+                switch (posLower)
+                {
+                    case "tl":
+                        left = screenArea.Left + EdgeMargin;
+                        top = screenArea.Top + EdgeMargin;
+                        break;
+                    case "tr":
+                        left = screenArea.Right - Width - EdgeMargin;
+                        top = screenArea.Top + EdgeMargin;
+                        break;
+                    case "bl":
+                        left = screenArea.Left + EdgeMargin;
+                        top = screenArea.Bottom - Height - EdgeMargin;
+                        break;
+                    case "br":
+                        left = screenArea.Right - Width - EdgeMargin;
+                        top = screenArea.Bottom - Height - EdgeMargin;
+                        break;
+                }
+
+                left = Math.Max(screenArea.Left + EdgeMargin, Math.Min(left, screenArea.Right - Width - EdgeMargin));
+                top = Math.Max(screenArea.Top + EdgeMargin, Math.Min(top, screenArea.Bottom - Height - EdgeMargin));
+
+                Left = left;
+                Top = top;
             }
-
-            var screenArea = Screen.FromControl(this).WorkingArea;
-
-            int left = _x ?? (screenArea.Left + (screenArea.Width - Width) / 2);
-            int top = _y ?? (screenArea.Top + (screenArea.Height - Height) / 2);
-
-            switch ((_pos ?? "").ToLowerInvariant())
-            {
-                case "tl":
-                    left = screenArea.Left + EdgeMargin;
-                    top = screenArea.Top + EdgeMargin;
-                    break;
-                case "tr":
-                    left = screenArea.Right - Width - EdgeMargin;
-                    top = screenArea.Top + EdgeMargin;
-                    break;
-                case "bl":
-                    left = screenArea.Left + EdgeMargin;
-                    top = screenArea.Bottom - Height - EdgeMargin;
-                    break;
-                case "br":
-                    left = screenArea.Right - Width - EdgeMargin;
-                    top = screenArea.Bottom - Height - EdgeMargin;
-                    break;
-            }
-
-            left = Math.Max(screenArea.Left + EdgeMargin, Math.Min(left, screenArea.Right - Width - EdgeMargin));
-            top = Math.Max(screenArea.Top + EdgeMargin, Math.Min(top, screenArea.Bottom - Height - EdgeMargin));
-
-            Left = left;
-            Top = top;
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -204,10 +289,17 @@ namespace TimerApp
                 var cp = base.CreateParams;
                 if (_clickThrough)
                 {
-                    cp.ExStyle |= 0x20; // WS_EX_TRANSPARENT
+                    cp.ExStyle |= 0x20;
                 }
                 return cp;
             }
+        }
+
+        private static double Clamp(double value, double min, double max)
+        {
+            if (value < min) return min;
+            if (value > max) return max;
+            return value;
         }
     }
 
@@ -235,8 +327,13 @@ namespace TimerApp
             Color textColor = Color.White;
             bool clickThrough = false;
             bool showClock = false;
-            string pos = "";
-            SystemSound endSound = SystemSounds.Beep;
+            string pos = null;
+            SystemSound endSound = null;
+
+            string speakText = null;
+            string speakVoice = null;
+            string speakTiming = null;
+            string soundTiming = null;
 
             int argIndex = 0;
             if (args.Length > 0 && !args[0].StartsWith("-"))
@@ -271,6 +368,14 @@ namespace TimerApp
                             default: ShowHelp(); return;
                         }
                     }
+                    else if (arg.StartsWith("--speak=") || arg.StartsWith("-sp="))
+                        speakText = arg.Substring(arg.IndexOf('=') + 1);
+                    else if (arg.StartsWith("--voice=") || arg.StartsWith("-v="))
+                        speakVoice = arg.Substring(arg.IndexOf('=') + 1);
+                    else if (arg.StartsWith("--speak-timing=") || arg.StartsWith("-st="))
+                        speakTiming = arg.Substring(arg.IndexOf('=') + 1).ToLower();
+                    else if (arg.StartsWith("--sound-timing=") || arg.StartsWith("-sd="))
+                        soundTiming = arg.Substring(arg.IndexOf('=') + 1).ToLower();
                     else { ShowHelp(); return; }
                 }
                 catch
@@ -283,7 +388,9 @@ namespace TimerApp
             string finalFont = string.IsNullOrWhiteSpace(fontName) ? "Segoe UI" : fontName;
             string finalPos = pos ?? "";
 
-            using (var frm = new TimerForm(seconds, x, y, fontSize, finalFont, opacity, textColor, clickThrough, showClock, finalPos, endSound))
+            using (var frm = new TimerForm(
+                seconds, x, y, fontSize, finalFont, opacity, textColor, clickThrough, showClock, finalPos, endSound,
+                speakText, speakVoice, speakTiming, soundTiming))
             {
                 Application.Run(frm);
             }
@@ -291,11 +398,29 @@ namespace TimerApp
 
         private static void ShowHelp()
         {
+            string voices = "";
+            try
+            {
+                using (var synth = new SpeechSynthesizer())
+                {
+                    var voiceList = synth.GetInstalledVoices()
+                        .Select(v => v.VoiceInfo.Name)
+                        .ToList();
+                    voices = voiceList.Count > 0
+                        ? string.Join(Environment.NewLine + "    ", voiceList)
+                        : "(No voices found)";
+                }
+            }
+            catch
+            {
+                voices = "(Failed to get voices)";
+            }
+
             Form helpForm = new Form()
             {
                 Text = "Help",
                 Width = 750,
-                Height = 400,
+                Height = 500,
                 StartPosition = FormStartPosition.CenterScreen
             };
 
@@ -312,18 +437,24 @@ namespace TimerApp
   Timer.exe [seconds] [options]
 
 Options:
-  -h, --help,           : Show this help message
-  -x=NUM                : Set window X position (overrides --pos)
-  -y=NUMM               : Set window Y position (overrides --pos)
-  -s, --size=NUM        : Set font size
-  -f, --font=NAME       : Set font family
-  -o, --opacity=NUM     : Set window opacity (0.1 - 1.0)
-  -c, --color=NAME      : Set text color
-  -ct, --clickthrough   : Make window ignore mouse clicks
-  -snd --sound=NAME     : System sound at timer end (Beep, Asterisk, Exclamation, Hand, Question)
-  -clk, --clock         : Show current time instead of countdown
-  -p, --pos=tl|tr|bl|br : Screen corner position
-";
+  -h, --help,              : Show this help message
+  -x=NUM                   : Set window X position (overrides --pos)
+  -y=NUMM                  : Set window Y position (overrides --pos)
+  -s, --size=NUM           : Set font size
+  -f, --font=NAME          : Set font family
+  -o, --opacity=NUM        : Set window opacity (0.1 - 1.0)
+  -c, --color=NAME         : Set text color
+  -ct, --clickthrough      : Make window ignore mouse clicks
+  -snd --sound=NAME        : System sound at timer end (Beep, Asterisk, Exclamation, Hand, Question)
+  -clk, --clock            : Show current time instead of countdown
+  -p, --pos=tl|tr|bl|br    : Screen corner position
+  -sp, --speak=TEXT        : Speak the specified text using speech synthesis
+  -v, --voice=NAME         : Select voice for speech synthesis (use with --speak)
+  -st, --speak-timing=WHEN : When to speak (start|middle|end, default end)
+  -sd, --sound-timing=WHEN : When to play sound (start|middle|end, default end)
+
+Available voices:
+    " + voices;
 
             helpForm.Controls.Add(textBox);
             helpForm.ShowDialog();
