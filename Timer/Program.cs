@@ -332,18 +332,19 @@ namespace TimerApp
                 var arg = args[i];
                 try
                 {
-                    if ((arg.StartsWith("--x=") || arg.StartsWith("-x=")) && int.TryParse(arg.Split('=')[1], out var xv)) x = xv;
-                    else if ((arg.StartsWith("--y=") || arg.StartsWith("-y=")) && int.TryParse(arg.Split('=')[1], out var yv)) y = yv;
-                    else if ((arg.StartsWith("--size=") || arg.StartsWith("-s=")) && float.TryParse(arg.Split('=')[1], out var fv)) fontSize = fv;
-                    else if ((arg.StartsWith("--font=") || arg.StartsWith("-f="))) fontName = arg.Split('=')[1];
-                    else if ((arg.StartsWith("--opacity=") || arg.StartsWith("-o=")) && double.TryParse(arg.Split('=')[1], out var ov)) opacity = ov;
-                    else if ((arg.StartsWith("--color=") || arg.StartsWith("-c="))) textColor = Color.FromName(arg.Split('=')[1]);
+                    if ((arg.StartsWith("--x=") || arg.StartsWith("-x=")) && int.TryParse(arg.Substring(arg.IndexOf('=') + 1), out var xv)) x = xv;
+                    else if ((arg.StartsWith("--y=") || arg.StartsWith("-y=")) && int.TryParse(arg.Substring(arg.IndexOf('=') + 1), out var yv)) y = yv;
+                    else if ((arg.StartsWith("--size=") || arg.StartsWith("-s=")) && float.TryParse(arg.Substring(arg.IndexOf('=') + 1), out var fv)) fontSize = fv;
+                    else if ((arg.StartsWith("--font=") || arg.StartsWith("-f="))) fontName = arg.Substring(arg.IndexOf('=') + 1);
+                    else if ((arg.StartsWith("--opacity=") || arg.StartsWith("-o=")) && double.TryParse(arg.Substring(arg.IndexOf('=') + 1), out var ov)) opacity = ov;
+                    else if ((arg.StartsWith("--color=") || arg.StartsWith("-c="))) textColor = Color.FromName(arg.Substring(arg.IndexOf('=') + 1));
                     else if (arg == "--clickthrough" || arg == "-ct") clickThrough = true;
-                    else if (arg == "--clock" || arg == "-clk") showClock = true;
-                    else if ((arg.StartsWith("--pos=") || arg.StartsWith("-p="))) pos = arg.Split('=')[1];
-                    else if ((arg.StartsWith("--sound=") || arg.StartsWith("-snd=")))
+                    else if (arg == "--clock" || arg == "-cl") showClock = true;
+                    else if ((arg.StartsWith("--pos=") || arg.StartsWith("-p="))) pos = arg.Substring(arg.IndexOf('=') + 1);
+                    else if ((arg.StartsWith("--sound=") || arg.StartsWith("-sd=")))
                     {
-                        switch (arg.Split('=')[1].ToLower())
+                        var sndValue = arg.Substring(arg.IndexOf('=') + 1).ToLower();
+                        switch (sndValue)
                         {
                             case "beep": endSound = SystemSounds.Beep; break;
                             case "asterisk": endSound = SystemSounds.Asterisk; break;
@@ -355,14 +356,13 @@ namespace TimerApp
                     }
                     else if (arg.StartsWith("--speak=") || arg.StartsWith("-sp="))
                         speakText = arg.Substring(arg.IndexOf('=') + 1);
-                    else if (arg.StartsWith("--voice=") || arg.StartsWith("-v="))
+                    else if (arg.StartsWith("--speak-voice=") || arg.StartsWith("-spv="))
                         speakVoice = arg.Substring(arg.IndexOf('=') + 1);
-                    else if (arg.StartsWith("--speak-timing=") || arg.StartsWith("-st="))
+                    else if (arg.StartsWith("--speak-timing=") || arg.StartsWith("-spt="))
                         speakTiming = arg.Substring(arg.IndexOf('=') + 1).ToLower();
-                    else if (arg.StartsWith("--sound-timing=") || arg.StartsWith("-sd="))
+                    else if (arg.StartsWith("--sound-timing=") || arg.StartsWith("-sdt="))
                         soundTiming = arg.Substring(arg.IndexOf('=') + 1).ToLower();
-                    else { ShowHelp(); return;
-                    }
+                    else { ShowHelp(); return; }
                 }
                 catch
                 {
@@ -420,20 +420,20 @@ namespace TimerApp
 
 Options:
   -h, --help,              : Show this help message
-  -x=NUM                   : Set window X position (overrides --pos)
-  -y=NUMM                  : Set window Y position (overrides --pos)
-  -s, --size=NUM           : Set font size
+  -c, --color=NAME         : Set text color
   -f, --font=NAME          : Set font family
   -o, --opacity=NUM        : Set window opacity (0.1 - 1.0)
-  -c, --color=NAME         : Set text color
-  -ct, --clickthrough      : Make window ignore mouse clicks
-  -snd --sound=NAME        : System sound at timer end (Beep, Asterisk, Exclamation, Hand, Question)
-  -clk, --clock            : Show current time instead of countdown
   -p, --pos=tl|tr|bl|br    : Screen corner position
+  -s, --size=NUM           : Set font size
+  -x, --x=NUM              : Set window X position (overrides --pos)
+  -y, --y=NUM              : Set window Y position (overrides --pos)
+  -cl, --clock             : Show current time instead of countdown
+  -ct, --clickthrough      : Make window ignore mouse clicks
+  -sd, --sound=NAME        : System sound at timer end (Beep, Asterisk, Exclamation, Hand, Question)
+  -sdt, --sound-timing=WHEN: When to play sound (start|middle|end, default end)
   -sp, --speak=TEXT        : Speak the specified text using speech synthesis
-  -v, --voice=NAME         : Select voice for speech synthesis (use with --speak)
-  -st, --speak-timing=WHEN : When to speak (start|middle|end, default end)
-  -sd, --sound-timing=WHEN : When to play sound (start|middle|end, default end)
+  -spv, --speak-voice=NAME : Select voice for speech synthesis (use with --speak)
+  -spt, --speak-timing=WHEN: When to speak (start|middle|end, default end)
 
 Available voices:
     {voices}
