@@ -1,8 +1,9 @@
 chcp 65001
-set SECONDS=5
+set SECONDS=3
 pushd %~dp0
 
 timer %SECONDS%
+timer %SECONDS% --all
 timer %SECONDS% --sound=Hand
 timer %SECONDS% --sound=Beep --sound-timing=start
 timer %SECONDS% --sound=Asterisk --sound-timing=end
@@ -21,6 +22,7 @@ timer %SECONDS% --clock --clickthrough
 timer %SECONDS% --font=consolas --color=red --opacity=0.2
 timer %SECONDS% --x=100 --y=100 --size=100
 
+timer %SECONDS% -a
 timer %SECONDS% -sd=Hand
 timer %SECONDS% -sd=Beep -sdt=start
 timer %SECONDS% -sd=Asterisk -sdt=end

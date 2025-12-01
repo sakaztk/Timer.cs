@@ -1,9 +1,11 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Media;
 using System.Windows.Forms;
 using System.Linq;
 using System.Speech.Synthesis;
+using System.Threading;
 
 using TimerType = System.Windows.Forms.Timer;
 
@@ -29,6 +31,8 @@ namespace TimerApp
         private readonly string _speakTiming;
         private readonly string _soundTiming;
 
+        private readonly Screen _targetScreen;
+
         private bool _middleSoundPlayed = false;
         private bool _middleSpeechPlayed = false;
         private bool _endSpeechStarted = false;
@@ -39,7 +43,8 @@ namespace TimerApp
         public TimerForm(double seconds, int? x, int? y, float fontSize, string fontName,
                          double opacity, Color textColor, bool clickThrough, bool showClock,
                          string pos, SystemSound endSound,
-                         string speakText, string speakVoice, string speakTiming, string soundTiming)
+                         string speakText, string speakVoice, string speakTiming, string soundTiming,
+                         Screen targetScreen = null)
         {
             _durationSeconds = Math.Max(0.0, seconds);
             _clickThrough = clickThrough;
@@ -55,6 +60,7 @@ namespace TimerApp
             _speakVoice = speakVoice;
             _speakTiming = string.IsNullOrEmpty(speakTiming) ? "end" : speakTiming;
             _soundTiming = string.IsNullOrEmpty(soundTiming) ? "end" : soundTiming;
+            _targetScreen = targetScreen;
 
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.Manual;
@@ -84,6 +90,9 @@ namespace TimerApp
                 _endTime = DateTime.Now.AddSeconds(_durationSeconds);
             }
         }
+
+        // Prevent the form from taking focus when shown
+        protected override bool ShowWithoutActivation => true;
 
         protected override void OnShown(EventArgs e)
         {
@@ -227,7 +236,7 @@ namespace TimerApp
                     Height = newHeight;
                 }
 
-                var screenArea = Screen.FromControl(this).WorkingArea;
+                var screenArea = (_targetScreen ?? Screen.FromControl(this)).WorkingArea;
 
                 int left = _x.HasValue ? _x.Value : (screenArea.Left + (screenArea.Width - Width) / 2);
                 int top = _y.HasValue ? _y.Value : (screenArea.Top + (screenArea.Height - Height) / 2);
@@ -291,6 +300,14 @@ namespace TimerApp
                 {
                     cp.ExStyle |= 0x20;
                 }
+
+                const int WS_EX_TOOLWINDOW = 0x00000080;
+                const int WS_EX_APPWINDOW = 0x00040000;
+                const int WS_EX_NOACTIVATE = 0x08000000;
+                cp.ExStyle |= WS_EX_TOOLWINDOW;
+                cp.ExStyle &= ~WS_EX_APPWINDOW;
+                cp.ExStyle |= WS_EX_NOACTIVATE;
+
                 return cp;
             }
         }
@@ -300,6 +317,33 @@ namespace TimerApp
             if (value < min) return min;
             if (value > max) return max;
             return value;
+        }
+    }
+
+    internal class MultiFormContext : ApplicationContext
+    {
+        private int _openForms;
+
+        public MultiFormContext(IEnumerable<Form> forms)
+        {
+            var list = forms.Where(f => f != null).ToList();
+            _openForms = list.Count;
+            if (_openForms == 0)
+            {
+                ExitThread();
+                return;
+            }
+
+            foreach (var f in list)
+            {
+                f.FormClosed += (s, e) =>
+                {
+                    if (Interlocked.Decrement(ref _openForms) == 0)
+                        ExitThread();
+                };
+                // Show here so each form's OnShown runs
+                f.Show();
+            }
         }
     }
 
@@ -335,6 +379,8 @@ namespace TimerApp
             string speakTiming = null;
             string soundTiming = null;
 
+            bool showAll = false;
+
             int argIndex = 0;
             if (args.Length > 0 && !args[0].StartsWith("-"))
             {
@@ -347,7 +393,8 @@ namespace TimerApp
                 var arg = args[i];
                 try
                 {
-                    if ((arg.StartsWith("--x=") || arg.StartsWith("-x=")) && int.TryParse(arg.Substring(arg.IndexOf('=') + 1), out var xv)) x = xv;
+                    if (arg == "--all" || arg == "-a") showAll = true;
+                    else if ((arg.StartsWith("--x=") || arg.StartsWith("-x=")) && int.TryParse(arg.Substring(arg.IndexOf('=') + 1), out var xv)) x = xv;
                     else if ((arg.StartsWith("--y=") || arg.StartsWith("-y=")) && int.TryParse(arg.Substring(arg.IndexOf('=') + 1), out var yv)) y = yv;
                     else if ((arg.StartsWith("--size=") || arg.StartsWith("-s=")) && float.TryParse(arg.Substring(arg.IndexOf('=') + 1), out var fv)) fontSize = fv;
                     else if ((arg.StartsWith("--font=") || arg.StartsWith("-f="))) fontName = arg.Substring(arg.IndexOf('=') + 1);
@@ -389,11 +436,28 @@ namespace TimerApp
             string finalFont = string.IsNullOrWhiteSpace(fontName) ? "Segoe UI" : fontName;
             string finalPos = pos ?? "";
 
-            using (var frm = new TimerForm(
-                seconds, x, y, fontSize, finalFont, opacity, textColor, clickThrough, showClock, finalPos, endSound,
-                speakText, speakVoice, speakTiming, soundTiming))
+            if (showAll)
             {
-                Application.Run(frm);
+                var forms = new List<Form>();
+                foreach (var screen in Screen.AllScreens)
+                {
+                    var frm = new TimerForm(
+                        seconds, x, y, fontSize, finalFont, opacity, textColor, clickThrough, showClock, finalPos, endSound,
+                        speakText, speakVoice, speakTiming, soundTiming,
+                        targetScreen: screen);
+                    forms.Add(frm);
+                }
+
+                Application.Run(new MultiFormContext(forms));
+            }
+            else
+            {
+                using (var frm = new TimerForm(
+                    seconds, x, y, fontSize, finalFont, opacity, textColor, clickThrough, showClock, finalPos, endSound,
+                    speakText, speakVoice, speakTiming, soundTiming))
+                {
+                    Application.Run(frm);
+                }
             }
         }
 
@@ -439,6 +503,7 @@ namespace TimerApp
 
 Options:
   -h, --help,              : Show this help message
+  -a, --all                : Show timer on all displays
   -c, --color=NAME         : Set text color
   -f, --font=NAME          : Set font family
   -o, --opacity=NUM        : Set window opacity (0.1 - 1.0)
