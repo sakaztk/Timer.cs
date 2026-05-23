@@ -1,9 +1,15 @@
+$scriptPath = 'C:\PathTo\DisplayTime.ps1'
+$scriptContent = @'
+& "C:\PathTo\Timer.exe" 120 -f=consolas -ct -cl -p=br -o="0.2" -sp="$((Get-Date).AddSeconds(60).ToString('HH:mm'))" -spt=middle
+'@
+Set-Content -Path $scriptPath -Value $scriptContent -Encoding UTF8
+
 $taskName  = 'DisplayTime'
 $taskPath  = '\sakaztk\'
 $author    = 'sakaztk'
-$exePath   = 'C:\pathto\Timer.exe'
-$taskArgs  = '120 --font=consolas --clickthrough --clock --pos=br --opacity=0.2'
-$startTime = '2025-01-01T00:59:00'
+$exePath = 'C:\Windows\System32\conhost.exe'
+$taskArgs = "--headless powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$scriptPath`""
+$startTime = '2025-01-01T05:59:00'
 
 $xml = @"
 <?xml version="1.0" encoding="UTF-16"?>
@@ -16,7 +22,7 @@ $xml = @"
   <Triggers>
     <CalendarTrigger>
       <Repetition>
-        <Interval>PT30M</Interval>
+        <Interval>PT1H</Interval>
         <Duration>P1D</Duration>
         <StopAtDurationEnd>false</StopAtDurationEnd>
       </Repetition>
