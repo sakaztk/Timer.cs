@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Imaging;
 using System.Media;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using System.Linq;
 using System.Speech.Synthesis;
@@ -13,9 +15,42 @@ namespace TimerApp
 {
     internal class TimerForm : Form
     {
+        [StructLayout(LayoutKind.Sequential)]
+        private struct POINT { public int x, y; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct SIZE { public int cx, cy; }
+
+        [StructLayout(LayoutKind.Sequential, Pack = 1)]
+        private struct BLENDFUNCTION
+        {
+            public byte BlendOp;
+            public byte BlendFlags;
+            public byte SourceConstantAlpha;
+            public byte AlphaFormat;
+        }
+
+        private const int ULW_ALPHA = 2;
+        private const byte AC_SRC_OVER = 0;
+        private const byte AC_SRC_ALPHA = 1;
+        private const int WS_EX_LAYERED = 0x00080000;
+        private const int WS_EX_TRANSPARENT = 0x00000020;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst,
+            ref POINT pptDst, ref SIZE psize, IntPtr hdcSrc, ref POINT pptSrc,
+            int crKey, ref BLENDFUNCTION pblend, int dwFlags);
+        [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hWnd);
+        [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+        [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleDC(IntPtr hDC);
+        [DllImport("gdi32.dll")] private static extern bool DeleteDC(IntPtr hdc);
+        [DllImport("gdi32.dll")] private static extern IntPtr SelectObject(IntPtr hDC, IntPtr hObject);
+        [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr hObject);
+
         private readonly TimerType _timer;
         private DateTime _endTime;
         private readonly double _durationSeconds;
+        private readonly double _opacity;
         private readonly bool _clickThrough;
         private readonly bool _showClock;
         private readonly Color _textColor;
@@ -47,6 +82,7 @@ namespace TimerApp
                          Screen targetScreen = null)
         {
             _durationSeconds = Math.Max(0.0, seconds);
+            _opacity = Clamp(opacity, 0.1, 1.0);
             _clickThrough = clickThrough;
             _showClock = showClock;
             _textColor = textColor;
@@ -66,9 +102,6 @@ namespace TimerApp
             StartPosition = FormStartPosition.Manual;
             TopMost = true;
             ShowInTaskbar = false;
-            BackColor = Color.Black;
-            TransparencyKey = Color.Black;
-            Opacity = Clamp(opacity, 0.1, 1.0);
 
             _timer = new TimerType { Interval = _showClock ? 1000 : 100 };
             _timer.Tick += Timer_Tick;
@@ -91,7 +124,6 @@ namespace TimerApp
             }
         }
 
-        // Prevent the form from taking focus when shown
         protected override bool ShowWithoutActivation => true;
 
         protected override void OnShown(EventArgs e)
@@ -107,7 +139,7 @@ namespace TimerApp
             }
 
             UpdateWindowSizeAndPosition();
-            Invalidate();
+            Render();
         }
 
         private void Timer_Tick(object sender, EventArgs e)
@@ -115,7 +147,7 @@ namespace TimerApp
             UpdateWindowSizeAndPosition();
             UpdateTimedEvents();
             UpdateEndCheck();
-            Invalidate();
+            Render();
         }
 
         private void UpdateTimedEvents()
@@ -224,7 +256,7 @@ namespace TimerApp
             using (var g = Graphics.FromImage(bmp))
             using (var font = new Font(_fontName, _fontSize, FontStyle.Bold))
             {
-                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
                 var sizeF = g.MeasureString(text, font);
 
                 int newWidth = (int)Math.Ceiling(sizeF.Width) + PaddingPx * 2;
@@ -270,35 +302,76 @@ namespace TimerApp
             }
         }
 
-        protected override void OnPaint(PaintEventArgs e)
+        private void Render()
         {
-            base.OnPaint(e);
-
-            e.Graphics.Clear(Color.Black);
+            if (IsDisposed || !IsHandleCreated || Width <= 0 || Height <= 0) return;
 
             string text = GetDisplayText();
 
-            using (var font = new Font(_fontName, _fontSize, FontStyle.Bold))
-            using (var brush = new SolidBrush(_textColor))
+            using (var bmp = new Bitmap(Width, Height, PixelFormat.Format32bppArgb))
             {
-                e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
-                var sizeF = e.Graphics.MeasureString(text, font);
+                using (var g = Graphics.FromImage(bmp))
+                using (var font = new Font(_fontName, _fontSize, FontStyle.Bold))
+                using (var brush = new SolidBrush(_textColor))
+                {
+                    g.Clear(Color.Transparent);
 
-                float x = PaddingPx + (Width - PaddingPx * 2 - sizeF.Width) / 2f;
-                float y = PaddingPx + (Height - PaddingPx * 2 - sizeF.Height) / 2f;
+                    g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+                    var sizeF = g.MeasureString(text, font);
 
-                e.Graphics.DrawString(text, font, brush, x, y);
+                    float x = PaddingPx + (Width - PaddingPx * 2 - sizeF.Width) / 2f;
+                    float y = PaddingPx + (Height - PaddingPx * 2 - sizeF.Height) / 2f;
+
+                    g.DrawString(text, font, brush, x, y);
+                }
+
+                IntPtr screenDc = GetDC(IntPtr.Zero);
+                IntPtr memDc = CreateCompatibleDC(screenDc);
+                IntPtr hBmp = IntPtr.Zero;
+                IntPtr oldBmp = IntPtr.Zero;
+                try
+                {
+                    hBmp = bmp.GetHbitmap(Color.FromArgb(0));
+                    oldBmp = SelectObject(memDc, hBmp);
+
+                    var size = new SIZE { cx = Width, cy = Height };
+                    var src = new POINT { x = 0, y = 0 };
+                    var dst = new POINT { x = Left, y = Top };
+                    var blend = new BLENDFUNCTION
+                    {
+                        BlendOp = AC_SRC_OVER,
+                        BlendFlags = 0,
+                        SourceConstantAlpha = (byte)Math.Round(_opacity * 255),
+                        AlphaFormat = AC_SRC_ALPHA
+                    };
+
+                    UpdateLayeredWindow(Handle, screenDc, ref dst, ref size,
+                                        memDc, ref src, 0, ref blend, ULW_ALPHA);
+                }
+                finally
+                {
+                    if (oldBmp != IntPtr.Zero) SelectObject(memDc, oldBmp);
+                    if (hBmp != IntPtr.Zero) DeleteObject(hBmp);
+                    DeleteDC(memDc);
+                    ReleaseDC(IntPtr.Zero, screenDc);
+                }
             }
         }
+
+        protected override void OnPaintBackground(PaintEventArgs e) { }
+        protected override void OnPaint(PaintEventArgs e) { }
 
         protected override CreateParams CreateParams
         {
             get
             {
                 var cp = base.CreateParams;
+
+                cp.ExStyle |= WS_EX_LAYERED;
+
                 if (_clickThrough)
                 {
-                    cp.ExStyle |= 0x20;
+                    cp.ExStyle |= WS_EX_TRANSPARENT;
                 }
 
                 const int WS_EX_TOOLWINDOW = 0x00000080;
@@ -341,7 +414,6 @@ namespace TimerApp
                     if (Interlocked.Decrement(ref _openForms) == 0)
                         ExitThread();
                 };
-                // Show here so each form's OnShown runs
                 f.Show();
             }
         }
