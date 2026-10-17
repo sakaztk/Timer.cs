@@ -46,12 +46,21 @@ namespace TimerApp
         [DllImport("gdi32.dll")] private static extern bool DeleteDC(IntPtr hdc);
         [DllImport("gdi32.dll")] private static extern IntPtr SelectObject(IntPtr hDC, IntPtr hObject);
         [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr hObject);
+        [DllImport("user32.dll")] private static extern bool SetWindowDisplayAffinity(IntPtr hWnd, uint dwAffinity);
+        private const uint WDA_EXCLUDEFROMCAPTURE = 0x00000011;
+        private const int SRCCOPY = 0x00CC0020;
+        private const int CAPTUREBLT = 0x40000000;
+        [DllImport("gdi32.dll")]
+        private static extern bool BitBlt(IntPtr hdcDest, int xDest, int yDest,
+            int width, int height, IntPtr hdcSrc, int xSrc, int ySrc, int rop);
 
         private readonly TimerType _timer;
         private DateTime _endTime;
         private readonly double _durationSeconds;
         private readonly double _opacity;
         private readonly bool _clickThrough;
+        private readonly bool _invert;
+        private bool _invertActive = false;
         private readonly bool _showClock;
         private readonly Color _textColor;
         private readonly float _fontSize;
@@ -76,7 +85,7 @@ namespace TimerApp
         private const int EdgeMargin = 0;
 
         public TimerForm(double seconds, int? x, int? y, float fontSize, string fontName,
-                         double opacity, Color textColor, bool clickThrough, bool showClock,
+                         double opacity, Color textColor, bool clickThrough, bool showClock, bool invert,
                          string pos, SystemSound endSound,
                          string speakText, string speakVoice, string speakTiming, string soundTiming,
                          Screen targetScreen = null)
@@ -84,6 +93,7 @@ namespace TimerApp
             _durationSeconds = Math.Max(0.0, seconds);
             _opacity = Clamp(opacity, 0.1, 1.0);
             _clickThrough = clickThrough;
+            _invert = invert;
             _showClock = showClock;
             _textColor = textColor;
             _fontSize = fontSize > 0 ? fontSize : 48;
@@ -103,7 +113,7 @@ namespace TimerApp
             TopMost = true;
             ShowInTaskbar = false;
 
-            _timer = new TimerType { Interval = _showClock ? 1000 : 100 };
+            _timer = new TimerType { Interval = (_showClock && !_invert) ? 1000 : 100 };
             _timer.Tick += Timer_Tick;
             _timer.Start();
 
@@ -138,6 +148,7 @@ namespace TimerApp
                 System.Threading.Tasks.Task.Run(() => Speak(_speakText, _speakVoice, true));
             }
 
+            EnableInvert();
             UpdateWindowSizeAndPosition();
             Render();
         }
@@ -325,6 +336,8 @@ namespace TimerApp
                     g.DrawString(text, font, brush, x, y);
                 }
 
+                if (_invertActive) ApplyInversion(bmp);
+
                 IntPtr screenDc = GetDC(IntPtr.Zero);
                 IntPtr memDc = CreateCompatibleDC(screenDc);
                 IntPtr hBmp = IntPtr.Zero;
@@ -354,6 +367,62 @@ namespace TimerApp
                     if (hBmp != IntPtr.Zero) DeleteObject(hBmp);
                     DeleteDC(memDc);
                     ReleaseDC(IntPtr.Zero, screenDc);
+                }
+            }
+        }
+
+        private void EnableInvert()
+        {
+            if (!_invert) return;
+            _invertActive = SetWindowDisplayAffinity(Handle, WDA_EXCLUDEFROMCAPTURE);
+        }
+
+        private void ApplyInversion(Bitmap textBmp)
+        {
+            int w = textBmp.Width, h = textBmp.Height;
+
+            using (var bg = new Bitmap(w, h, PixelFormat.Format32bppArgb))
+            {
+                using (var gb = Graphics.FromImage(bg))
+                {
+                    IntPtr screenDc = GetDC(IntPtr.Zero);
+                    IntPtr dstDc = gb.GetHdc();
+                    try
+                    {
+                        BitBlt(dstDc, 0, 0, w, h, screenDc, Left, Top, SRCCOPY | CAPTUREBLT);
+                    }
+                    finally
+                    {
+                        gb.ReleaseHdc(dstDc);
+                        ReleaseDC(IntPtr.Zero, screenDc);
+                    }
+                }
+
+                var rect = new Rectangle(0, 0, w, h);
+                var bgData = bg.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+                var txData = textBmp.LockBits(rect, ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+                try
+                {
+                    int bytes = txData.Stride * h;
+                    var bgBuf = new byte[bytes];
+                    var txBuf = new byte[bytes];
+                    Marshal.Copy(bgData.Scan0, bgBuf, 0, bytes);
+                    Marshal.Copy(txData.Scan0, txBuf, 0, bytes);
+
+                    for (int i = 0; i < bytes; i += 4)
+                    {
+                        if (txBuf[i + 3] == 0) continue;
+                        txBuf[i] = (byte)(255 - bgBuf[i]);
+                        txBuf[i + 1] = (byte)(255 - bgBuf[i + 1]);
+                        txBuf[i + 2] = (byte)(255 - bgBuf[i + 2]);
+                    }
+
+                    Marshal.Copy(txBuf, 0, txData.Scan0, bytes);
+                }
+                finally
+                {
+                    bg.UnlockBits(bgData);
+                    textBmp.UnlockBits(txData);
                 }
             }
         }
@@ -443,6 +512,7 @@ namespace TimerApp
             Color textColor = Color.White;
             bool clickThrough = false;
             bool showClock = false;
+            bool invert = false;
             string pos = null;
             SystemSound endSound = null;
 
@@ -474,6 +544,7 @@ namespace TimerApp
                     else if ((arg.StartsWith("--color=") || arg.StartsWith("-c="))) textColor = Color.FromName(arg.Substring(arg.IndexOf('=') + 1));
                     else if (arg == "--clickthrough" || arg == "-ct") clickThrough = true;
                     else if (arg == "--clock" || arg == "-cl") showClock = true;
+                    else if (arg == "--invert" || arg == "-i") invert = true;
                     else if ((arg.StartsWith("--pos=") || arg.StartsWith("-p="))) pos = arg.Substring(arg.IndexOf('=') + 1);
                     else if ((arg.StartsWith("--sound=") || arg.StartsWith("-sd=")))
                     {
@@ -514,7 +585,7 @@ namespace TimerApp
                 foreach (var screen in Screen.AllScreens)
                 {
                     var frm = new TimerForm(
-                        seconds, x, y, fontSize, finalFont, opacity, textColor, clickThrough, showClock, finalPos, endSound,
+                        seconds, x, y, fontSize, finalFont, opacity, textColor, clickThrough, showClock, invert, finalPos, endSound,
                         speakText, speakVoice, speakTiming, soundTiming,
                         targetScreen: screen);
                     forms.Add(frm);
@@ -525,7 +596,7 @@ namespace TimerApp
             else
             {
                 using (var frm = new TimerForm(
-                    seconds, x, y, fontSize, finalFont, opacity, textColor, clickThrough, showClock, finalPos, endSound,
+                    seconds, x, y, fontSize, finalFont, opacity, textColor, clickThrough, showClock, invert, finalPos, endSound,
                     speakText, speakVoice, speakTiming, soundTiming))
                 {
                     Application.Run(frm);
@@ -585,6 +656,7 @@ Options:
   -y, --y=NUM              : Set window Y position (overrides --pos)
   -cl, --clock             : Show current time instead of countdown
   -ct, --clickthrough      : Make window ignore mouse clicks
+  -i, --invert             : Draw text in the inverted color of the background (Windows 10 2004+)
   -sd, --sound=NAME        : System sound at timer end (Beep, Asterisk, Exclamation, Hand, Question)
   -sdt, --sound-timing=WHEN: When to play sound (start|middle|end, default end)
   -sp, --speak=TEXT        : Speak the specified text using speech synthesis

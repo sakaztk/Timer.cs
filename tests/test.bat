@@ -20,6 +20,7 @@ timer %SECONDS% --pos=bl
 timer %SECONDS% --pos=br
 timer %SECONDS% --clock --clickthrough
 timer %SECONDS% --font=consolas --color=red --opacity=0.2
+timer %SECONDS% --invert
 timer %SECONDS% --x=100 --y=100 --size=100
 
 timer %SECONDS% -a
@@ -39,6 +40,7 @@ timer %SECONDS% -p=bl
 timer %SECONDS% -p=br
 timer %SECONDS% -cl -ct
 timer %SECONDS% -f=consolas -c=red -o=0.2
+timer %SECONDS% -i
 timer %SECONDS% -x=100 -y=100 -s=100
 
 popd
