@@ -9,6 +9,7 @@ using System.Linq;
 using System.Media;
 using System.Runtime.InteropServices;
 using System.Speech.Synthesis;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -101,6 +102,13 @@ namespace TimerApp
                 o.SpeakVoice = v;
                 return null;
             }, "--speak-voice", "-spv");
+            AddValue((o, v) =>
+            {
+                double seconds;
+                if (!TimeSpec.TryParseUntil(v, DateTime.Now, out seconds)) return "Invalid time of day: " + v;
+                o.Seconds = seconds;
+                return null;
+            }, "--until", "-u");
             AddValue((o, v) => ParseTiming(v, t => o.SpeakTiming = t), "--speak-timing", "-spt");
             AddValue((o, v) => ParseTiming(v, t => o.SoundTiming = t), "--sound-timing", "-sdt");
         }
@@ -114,7 +122,7 @@ namespace TimerApp
             if (args.Length > 0 && !args[0].StartsWith("-"))
             {
                 double seconds;
-                if (!double.TryParse(args[0], NumberStyles.Float, CultureInfo.InvariantCulture, out seconds))
+                if (!TimeSpec.TryParseDuration(args[0], out seconds))
                 {
                     error = "Invalid time: " + args[0];
                     return false;
@@ -193,6 +201,81 @@ namespace TimerApp
                 return "Invalid timing (start|middle|end): " + value;
             set(timing);
             return null;
+        }
+    }
+
+    internal static class TimeSpec
+    {
+        private static readonly Regex UnitPattern = new Regex(
+            @"^(?:(?<h>\d+(?:\.\d+)?)h)?(?:(?<m>\d+(?:\.\d+)?)m)?(?:(?<s>\d+(?:\.\d+)?)s)?$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        private static readonly string[] TimeOfDayFormats = { "H:mm", "H:mm:ss" };
+
+        public static bool TryParseDuration(string text, out double seconds)
+        {
+            seconds = 0;
+            text = text.Trim();
+            if (text.Length == 0) return false;
+
+            double plain;
+            if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out plain))
+            {
+                if (!IsValid(plain)) return false;
+                seconds = plain;
+                return true;
+            }
+
+            if (text.IndexOf(':') >= 0)
+            {
+                var parts = text.Split(':');
+                if (parts.Length < 2 || parts.Length > 3) return false;
+
+                double total = 0;
+                foreach (var part in parts)
+                {
+                    double value;
+                    if (!double.TryParse(part, NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+                        || !IsValid(value))
+                        return false;
+                    total = total * 60 + value;
+                }
+                seconds = total;
+                return true;
+            }
+
+            var m = UnitPattern.Match(text);
+            if (!m.Success) return false;
+            if (!m.Groups["h"].Success && !m.Groups["m"].Success && !m.Groups["s"].Success) return false;
+
+            seconds = Part(m, "h") * 3600 + Part(m, "m") * 60 + Part(m, "s");
+            return true;
+        }
+
+        public static bool TryParseUntil(string text, DateTime now, out double seconds)
+        {
+            seconds = 0;
+            DateTime time;
+            if (!DateTime.TryParseExact(text.Trim(), TimeOfDayFormats, CultureInfo.InvariantCulture,
+                    DateTimeStyles.None, out time))
+                return false;
+
+            var target = now.Date + time.TimeOfDay;
+            if (target <= now) target = target.AddDays(1);
+
+            seconds = (target - now).TotalSeconds;
+            return true;
+        }
+
+        private static bool IsValid(double value)
+        {
+            return !double.IsNaN(value) && !double.IsInfinity(value) && value >= 0;
+        }
+
+        private static double Part(Match m, string name)
+        {
+            var group = m.Groups[name];
+            return group.Success ? double.Parse(group.Value, CultureInfo.InvariantCulture) : 0;
         }
     }
 
@@ -857,7 +940,12 @@ namespace TimerApp
             };
 
             textBox.Text = $@"Usage:
-  Timer.exe [seconds] [options]
+  Timer.exe [time] [options]
+
+Time:
+  90, 1.5          : seconds
+  5m, 1h30m, 90s   : with units (h, m, s)
+  1:30, 1:02:03    : m:s or h:m:s
 
 Options:
   -h, --help,              : Show this help message
@@ -869,6 +957,7 @@ Options:
   -s, --size=NUM           : Set font size
   -x, --x=NUM              : Set window X position (overrides --pos)
   -y, --y=NUM              : Set window Y position (overrides --pos)
+  -u, --until=HH:mm[:ss]   : Count down to the next occurrence of that time of day
   -cl, --clock             : Show current time instead of countdown
   -ct, --clickthrough      : Make window ignore mouse clicks
   -i, --invert             : Draw text in the inverted color of the background (Windows 10 2004+)
