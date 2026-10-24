@@ -74,7 +74,9 @@ namespace TimerApp
             AddValue((o, v) => ParseDouble(v, n => o.Opacity = n), "--opacity", "-o");
             AddValue((o, v) =>
             {
-                o.TextColor = Color.FromName(v);
+                Color color;
+                if (!ColorParser.TryParse(v, out color)) return "Invalid color: " + v;
+                o.TextColor = color;
                 return null;
             }, "--color", "-c");
             AddValue((o, v) =>
@@ -276,6 +278,55 @@ namespace TimerApp
         {
             var group = m.Groups[name];
             return group.Success ? double.Parse(group.Value, CultureInfo.InvariantCulture) : 0;
+        }
+    }
+
+    internal static class ColorParser
+    {
+        public static bool TryParse(string text, out Color color)
+        {
+            color = Color.Empty;
+            text = text.Trim();
+            if (text.Length == 0) return false;
+
+            if (text[0] == '#')
+            {
+                string hex = text.Substring(1);
+                uint value;
+                if (!uint.TryParse(hex, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out value))
+                    return false;
+
+                switch (hex.Length)
+                {
+                    case 3:
+                        color = Color.FromArgb(Nibble(value, 8), Nibble(value, 4), Nibble(value, 0));
+                        return true;
+                    case 6:
+                        color = Color.FromArgb(Byte(value, 16), Byte(value, 8), Byte(value, 0));
+                        return true;
+                    case 8:
+                        color = Color.FromArgb(Byte(value, 24), Byte(value, 16), Byte(value, 8), Byte(value, 0));
+                        return true;
+                    default:
+                        return false;
+                }
+            }
+
+            var named = Color.FromName(text);
+            if (!named.IsKnownColor) return false;
+
+            color = named;
+            return true;
+        }
+
+        private static int Nibble(uint value, int shift)
+        {
+            return (int)((value >> shift) & 0xF) * 17;
+        }
+
+        private static int Byte(uint value, int shift)
+        {
+            return (int)((value >> shift) & 0xFF);
         }
     }
 
@@ -950,7 +1001,7 @@ Time:
 Options:
   -h, --help,              : Show this help message
   -a, --all                : Show timer on all displays
-  -c, --color=NAME         : Set text color
+  -c, --color=NAME|#RRGGBB : Set text color (name, #RGB, #RRGGBB or #AARRGGBB)
   -f, --font=NAME          : Set font family
   -o, --opacity=NUM        : Set window opacity (0.1 - 1.0)
   -p, --pos=tl|tr|bl|br    : Screen corner position

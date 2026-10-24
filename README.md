@@ -10,7 +10,7 @@ Time:
 Options:
   -h, --help,              : Show this help message
   -a, --all                : Show timer on all displays
-  -c, --color=NAME         : Set text color
+  -c, --color=NAME|#RRGGBB : Set text color (name, #RGB, #RRGGBB or #AARRGGBB)
   -f, --font=NAME          : Set font family
   -o, --opacity=NUM        : Set window opacity (0.1 - 1.0)
   -p, --pos=tl|tr|bl|br    : Screen corner position
