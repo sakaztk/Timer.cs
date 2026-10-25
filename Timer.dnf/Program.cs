@@ -6,10 +6,12 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Media;
 using System.Runtime.InteropServices;
 using System.Speech.Synthesis;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
@@ -35,6 +37,7 @@ namespace TimerApp
         public bool ShowAll;
         public string Pos = "";
         public SystemSound EndSound;
+        public string AudioPath;
         public string SpeakText;
         public string SpeakVoice;
         public string SpeakTiming = "end";
@@ -105,6 +108,15 @@ namespace TimerApp
                 o.EndSound = sound;
                 return null;
             }, "--sound", "-sd");
+            AddValue((o, v) =>
+            {
+                if (!File.Exists(v)) return "File not found: " + v;
+                string path = Path.GetFullPath(v);
+                string error = AudioPlayer.Probe(path);
+                if (error != null) return error;
+                o.AudioPath = path;
+                return null;
+            }, "--sound-file", "-sdf");
             AddValue((o, v) =>
             {
                 o.SpeakText = v;
@@ -371,6 +383,134 @@ namespace TimerApp
         }
     }
 
+    internal sealed class AudioPlayer : IDisposable
+    {
+        [DllImport("winmm.dll", CharSet = CharSet.Unicode)]
+        private static extern int mciSendString(string command, StringBuilder returnString, int returnLength, IntPtr callback);
+
+        [DllImport("winmm.dll", CharSet = CharSet.Unicode)]
+        private static extern bool mciGetErrorString(int errorCode, StringBuilder errorText, int errorTextSize);
+
+        private static int _counter;
+
+        private readonly string _path;
+        private readonly HashSet<string> _active = new HashSet<string>();
+        private bool _disposed;
+
+        public AudioPlayer(string path)
+        {
+            _path = path;
+        }
+
+        public static string Probe(string path)
+        {
+            string alias = NextAlias();
+            string error = Execute(OpenCommand(path, alias));
+            if (error != null) return $"Cannot play audio file: {error}";
+
+            Execute("close " + alias);
+            return null;
+        }
+
+        public void Play()
+        {
+            Exception failure = null;
+            var thread = new Thread(() =>
+            {
+                try
+                {
+                    PlayCore();
+                }
+                catch (Exception ex)
+                {
+                    failure = ex;
+                }
+            });
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.IsBackground = true;
+            thread.Start();
+            thread.Join();
+
+            if (failure != null) throw failure;
+        }
+
+        private void PlayCore()
+        {
+            string alias = NextAlias();
+            string error = Execute(OpenCommand(_path, alias));
+            if (error != null) throw new InvalidOperationException("open: " + error);
+
+            lock (_active)
+            {
+                if (_disposed)
+                {
+                    Execute("close " + alias);
+                    return;
+                }
+                _active.Add(alias);
+            }
+
+            try
+            {
+                error = Execute($"play {alias} wait");
+                if (error != null && !WasDisposed()) throw new InvalidOperationException("play: " + error);
+            }
+            finally
+            {
+                bool owned;
+                lock (_active)
+                {
+                    owned = _active.Remove(alias);
+                }
+                if (owned) Execute("close " + alias);
+            }
+        }
+
+        public void Dispose()
+        {
+            string[] aliases;
+            lock (_active)
+            {
+                _disposed = true;
+                aliases = _active.ToArray();
+                _active.Clear();
+            }
+            foreach (var alias in aliases)
+            {
+                string captured = alias;
+                ThreadPool.QueueUserWorkItem(_ => Execute("close " + captured));
+            }
+        }
+
+        private bool WasDisposed()
+        {
+            lock (_active)
+            {
+                return _disposed;
+            }
+        }
+
+        private static string NextAlias()
+        {
+            return "timer_audio_" + Interlocked.Increment(ref _counter);
+        }
+
+        private static string OpenCommand(string path, string alias)
+        {
+            bool isWav = string.Equals(Path.GetExtension(path), ".wav", StringComparison.OrdinalIgnoreCase);
+            return $"open \"{path}\"{(isWav ? "" : " type mpegvideo")} alias {alias}";
+        }
+
+        private static string Execute(string command)
+        {
+            int code = mciSendString(command, null, 0, IntPtr.Zero);
+            if (code == 0) return null;
+
+            var buffer = new StringBuilder(256);
+            return mciGetErrorString(code, buffer, buffer.Capacity) ? buffer.ToString() : $"MCI error {code}";
+        }
+    }
+
     internal class TimerForm : Form
     {
         [StructLayout(LayoutKind.Sequential)]
@@ -439,6 +579,7 @@ namespace TimerApp
 
         private readonly Options _o;
         private readonly Screen _targetScreen;
+        private readonly AudioPlayer _audio;
         private readonly TimerType _timer;
         private readonly Stopwatch _stopwatch = Stopwatch.StartNew();
         private readonly double _durationSeconds;
@@ -478,6 +619,11 @@ namespace TimerApp
 
             _measureGraphics = Graphics.FromImage(_measureBitmap);
             _measureGraphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+
+            if (options.AudioPath != null)
+            {
+                _audio = new AudioPlayer(options.AudioPath);
+            }
 
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.Manual;
@@ -557,15 +703,20 @@ namespace TimerApp
             if (_endSpeechStarted) return;
             _endSpeechStarted = true;
 
-            if (_o.SoundTiming == "end") PlaySound();
+            bool soundAtEnd = _o.SoundTiming == "end";
+            if (soundAtEnd && _o.EndSound != null) _o.EndSound.Play();
 
+            bool playAudio = soundAtEnd && _audio != null;
             string text = _o.SpeakText;
-            if (_o.SpeakTiming == "end" && !string.IsNullOrEmpty(text))
+            bool speak = _o.SpeakTiming == "end" && !string.IsNullOrEmpty(text);
+
+            if (playAudio || speak)
             {
                 string voice = _o.SpeakVoice;
                 System.Threading.Tasks.Task.Run(() =>
                 {
-                    Speak(text, voice);
+                    if (playAudio) PlayAudio(true);
+                    if (speak) Speak(text, voice);
                     if (!IsDisposed) BeginInvoke((Action)StopAndClose);
                 });
                 return;
@@ -583,6 +734,28 @@ namespace TimerApp
         private void PlaySound()
         {
             if (_o.EndSound != null) _o.EndSound.Play();
+            PlayAudio(false);
+        }
+
+        private void PlayAudio(bool wait)
+        {
+            var audio = _audio;
+            if (audio == null) return;
+
+            if (wait) RunAudio(audio);
+            else System.Threading.Tasks.Task.Run(() => RunAudio(audio));
+        }
+
+        private static void RunAudio(AudioPlayer audio)
+        {
+            try
+            {
+                audio.Play();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Audio play error: " + ex.Message, "Sound Error");
+            }
         }
 
         private void StartSpeech()
@@ -955,6 +1128,7 @@ namespace TimerApp
             if (disposing)
             {
                 if (_timer != null) _timer.Dispose();
+                if (_audio != null) _audio.Dispose();
                 if (_font != null) _font.Dispose();
                 if (_measureGraphics != null) _measureGraphics.Dispose();
                 _measureBitmap.Dispose();
@@ -1131,6 +1305,7 @@ Options:
   -i, --invert             : Draw text in the inverted color of the background (Windows 10 2004+)
   -sd, --sound=NAME        : System sound at timer end (Beep, Asterisk, Exclamation, Hand, Question)
   -sdt, --sound-timing=WHEN: When to play sound (start|middle|end, default end)
+  -sdf, --sound-file=PATH  : Play an audio file (WAV, MP3, WMA, ...) at the sound timing
   -sp, --speak=TEXT        : Speak the specified text using speech synthesis
   -spv, --speak-voice=NAME : Select voice for speech synthesis (use with --speak)
   -spt, --speak-timing=WHEN: When to speak (start|middle|end, default end)

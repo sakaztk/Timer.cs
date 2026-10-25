@@ -8,6 +8,7 @@ timer %SECONDS% --sound=Hand
 timer %SECONDS% --sound=Beep --sound-timing=start
 timer %SECONDS% --sound=Asterisk --sound-timing=end
 timer %SECONDS% --sound=Exclamation --sound-timing=middle
+timer %SECONDS% --sound-file=%~dp0\test.wav --sound-timing=start
 timer %SECONDS% --speak=test
 timer %SECONDS% --speak=start --speak-timing=start
 timer %SECONDS% --speak=end --speak-timing=end
@@ -30,6 +31,7 @@ timer %SECONDS% -sd=Hand
 timer %SECONDS% -sd=Beep -sdt=start
 timer %SECONDS% -sd=Asterisk -sdt=end
 timer %SECONDS% -sd=Exclamation -sdt=middle
+timer %SECONDS% -sf=%~dp0\test.wav -sdt=start
 timer %SECONDS% -sp=test
 timer %SECONDS% -sp=start -spt=start
 timer %SECONDS% -sp=end -spt=end

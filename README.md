@@ -25,6 +25,7 @@ Options:
   -i, --invert             : Draw text in the inverted color of the background (Windows 10 2004+)
   -sd, --sound=NAME        : System sound at timer end (Beep, Asterisk, Exclamation, Hand, Question)
   -sdt, --sound-timing=WHEN: When to play sound (start|middle|end, default end)
+  -sdf, --sound-file=PATH  : Play an audio file (WAV, MP3, WMA, ...) at the sound timing
   -sp, --speak=TEXT        : Speak the specified text using speech synthesis
   -spv, --speak-voice=NAME : Select voice for speech synthesis (use with --speak)
   -spt, --speak-timing=WHEN: When to speak (start|middle|end, default end)
