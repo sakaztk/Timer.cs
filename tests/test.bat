@@ -14,9 +14,9 @@ timer %SECONDS% --speak=end --speak-timing=end
 timer %SECONDS% --speak=middle --speak-timing=middle
 timer %SECONDS% --speak="はるか" --speak-voice="Microsoft Haruka Desktop"
 timer %SECONDS% --speak=David --speak-voice="Microsoft David Desktop"
-timer %SECONDS% --pos=tl --color=#ff0000
-timer %SECONDS% --pos=tr --color=#0f0
-timer %SECONDS% --pos=bl --color=#700000ff
+timer %SECONDS% --pos=tl --color=#ff0000 --bg=#00ff00 --bg-opacity=0.3
+timer %SECONDS% --pos=tr --color=#0f0 --bg=#00f
+timer %SECONDS% --pos=bl --color=#700000ff --bg=#30ff0000
 timer %SECONDS% --pos=br
 timer %SECONDS% --clock --clickthrough
 timer %SECONDS% --font=consolas --color=red --opacity=0.2
@@ -36,9 +36,9 @@ timer %SECONDS% -sp=end -spt=end
 timer %SECONDS% -sp=middle -spt=middle
 timer %SECONDS% -sp="はるか" -spv="Microsoft Haruka Desktop"
 timer %SECONDS% -sp=David -spv="Microsoft David Desktop"
-timer %SECONDS% -p=tl -c=#ff0000
-timer %SECONDS% -p=tr -c=#0f0
-timer %SECONDS% -p=bl -c=#700000ff
+timer %SECONDS% -p=tl -c=#ff0000 -bg=#00ff00 -bgo=0.3
+timer %SECONDS% -p=tr -c=#0f0 -bg=#00f
+timer %SECONDS% -p=bl -c=#700000ff -bg=#30ff0000
 timer %SECONDS% -p=br
 timer %SECONDS% -cl -ct
 timer %SECONDS% -f=consolas -c=red -o=0.2

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.Globalization;
@@ -24,6 +25,8 @@ namespace TimerApp
         public string FontName = "Segoe UI";
         public double Opacity = 0.95;
         public Color TextColor = Color.White;
+        public Color? BgColor;
+        public double BgOpacity = 0.6;
         public bool ClickThrough;
         public bool ShowClock;
         public bool Invert;
@@ -69,6 +72,13 @@ namespace TimerApp
             AddValue((o, v) =>
             {
                 if (!ColorParser.TryParse(v, out var color)) return $"Invalid color: {v}";
+                o.BgColor = color;
+                return null;
+            }, "--bg", "-bg");
+            AddValue((o, v) => ParseDouble(v, n => o.BgOpacity = Math.Clamp(n, 0.0, 1.0)), "--bg-opacity", "-bgo");
+            AddValue((o, v) =>
+            {
+                if (!ColorParser.TryParse(v, out var color)) return $"Invalid color: {v}";
                 o.TextColor = color;
                 return null;
             }, "--color", "-c");
@@ -109,6 +119,7 @@ namespace TimerApp
         {
             options = new Options();
             error = null;
+            args = RejoinSplitArguments(args);
 
             int index = 0;
             if (args.Length > 0 && !args[0].StartsWith("-"))
@@ -150,6 +161,35 @@ namespace TimerApp
                 if (error != null) return false;
             }
 
+            return true;
+        }
+
+        private static string[] RejoinSplitArguments(string[] args)
+        {
+            var list = new List<string>();
+            foreach (var arg in args)
+            {
+                if (list.Count > 0 && IsFractionPart(arg))
+                {
+                    string previous = list[list.Count - 1];
+                    if (previous.StartsWith("-") && previous.IndexOf('=') >= 0)
+                    {
+                        list[list.Count - 1] = previous + arg;
+                        continue;
+                    }
+                }
+                list.Add(arg);
+            }
+            return list.ToArray();
+        }
+
+        private static bool IsFractionPart(string text)
+        {
+            if (text.Length < 2 || text[0] != '.') return false;
+            for (int i = 1; i < text.Length; i++)
+            {
+                if (!char.IsDigit(text[i])) return false;
+            }
             return true;
         }
 
@@ -362,6 +402,7 @@ namespace TimerApp
         private readonly double _durationSeconds;
         private readonly double _opacity;
         private readonly float _fontSize;
+        private readonly Color? _plateColor;
         private readonly Bitmap _measureBitmap = new(1, 1);
         private readonly Graphics _measureGraphics;
 
@@ -372,6 +413,7 @@ namespace TimerApp
         private SizeF _measuredSize;
         private FrameState? _lastFrame;
         private bool _invertActive;
+        private int _padding;
 
         private bool _middleSoundPlayed = false;
         private bool _middleSpeechPlayed = false;
@@ -384,6 +426,11 @@ namespace TimerApp
             _durationSeconds = Math.Max(0.0, options.Seconds);
             _opacity = Math.Clamp(options.Opacity, 0.1, 1.0);
             _fontSize = options.FontSize > 0 ? options.FontSize : 48;
+
+            if (options.BgColor is { } bg)
+            {
+                _plateColor = Color.FromArgb((int)Math.Round(bg.A * options.BgOpacity), bg);
+            }
 
             _measureGraphics = Graphics.FromImage(_measureBitmap);
             _measureGraphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
@@ -585,8 +632,9 @@ namespace TimerApp
             float scale = GetScale(screenArea);
             var sizeF = MeasureText(text, scale);
 
-            int newWidth = (int)Math.Ceiling(sizeF.Width);
-            int newHeight = (int)Math.Ceiling(sizeF.Height);
+            _padding = _plateColor.HasValue ? (int)Math.Round(_fontSize * scale * 96f / 72f * 0.2f) : 0;
+            int newWidth = (int)Math.Ceiling(sizeF.Width) + _padding * 2;
+            int newHeight = (int)Math.Ceiling(sizeF.Height) + _padding * 2;
 
             bool resized = newWidth != Width || newHeight != Height;
             if (resized)
@@ -640,19 +688,74 @@ namespace TimerApp
             if (!force && !_invertActive && _lastFrame == frame) return;
             _lastFrame = frame;
 
-            using var bmp = new Bitmap(Width, Height, PixelFormat.Format32bppArgb);
-            using (var g = Graphics.FromImage(bmp))
+            int w = Width;
+            int h = Height;
+
+            using var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+            using (var gp = Graphics.FromImage(bmp))
             {
-                g.Clear(Color.Transparent);
-                DrawText(g, frame, font, frame.Color);
+                gp.Clear(Color.Transparent);
+                if (_plateColor is { } plate) FillPlate(gp, plate, w, h);
             }
 
             if (_invertActive)
             {
-                InvertTextColors(bmp, CaptureBackground(bmp.Width, bmp.Height));
+                using var textBmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+                using (var gt = Graphics.FromImage(textBmp))
+                {
+                    gt.Clear(Color.Transparent);
+                    DrawText(gt, frame, font, Color.White);
+                }
+
+                var background = CaptureBackground(w, h);
+                CompositePlate(background, ReadPixels(bmp));
+                InvertTextColors(textBmp, background);
+
+                using var gf = Graphics.FromImage(bmp);
+                gf.DrawImage(textBmp, 0, 0, w, h);
+            }
+            else
+            {
+                using var gf = Graphics.FromImage(bmp);
+                DrawText(gf, frame, font, frame.Color);
             }
 
             Present(bmp);
+        }
+
+        private void FillPlate(Graphics g, Color color, int w, int h)
+        {
+            int diameter = Math.Min(_padding * 2, Math.Min(w, h));
+
+            using var path = new GraphicsPath();
+            if (diameter <= 0)
+            {
+                path.AddRectangle(new Rectangle(0, 0, w, h));
+            }
+            else
+            {
+                path.AddArc(0, 0, diameter, diameter, 180, 90);
+                path.AddArc(w - diameter, 0, diameter, diameter, 270, 90);
+                path.AddArc(w - diameter, h - diameter, diameter, diameter, 0, 90);
+                path.AddArc(0, h - diameter, diameter, diameter, 90, 90);
+                path.CloseFigure();
+            }
+
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using var brush = new SolidBrush(color);
+            g.FillPath(brush, path);
+        }
+
+        private static void CompositePlate(byte[] background, byte[] plate)
+        {
+            for (int i = 0; i < background.Length; i += 4)
+            {
+                int a = plate[i + 3];
+                if (a == 0) continue;
+                background[i] = (byte)((background[i] * (255 - a) + plate[i] * a) / 255);
+                background[i + 1] = (byte)((background[i + 1] * (255 - a) + plate[i + 1] * a) / 255);
+                background[i + 2] = (byte)((background[i + 2] * (255 - a) + plate[i + 2] * a) / 255);
+            }
         }
 
         private void DrawText(Graphics g, FrameState frame, Font font, Color color)
@@ -917,6 +1020,8 @@ Options:
   -c, --color=NAME|#RRGGBB : Set text color (name, #RGB, #RRGGBB or #AARRGGBB)
   -f, --font=NAME          : Set font family
   -o, --opacity=NUM        : Set window opacity (0.1 - 1.0)
+  -bg, --bg=COLOR          : Draw a rounded background plate behind the text
+  -bgo, --bg-opacity=NUM   : Plate opacity (0.0 - 1.0, default 0.6)
   -p, --pos=tl|tr|bl|br    : Screen corner position
   -s, --size=NUM           : Set font size
   -x, --x=NUM              : Set window X position (overrides --pos)

@@ -13,6 +13,8 @@ Options:
   -c, --color=NAME|#RRGGBB : Set text color (name, #RGB, #RRGGBB or #AARRGGBB)
   -f, --font=NAME          : Set font family
   -o, --opacity=NUM        : Set window opacity (0.1 - 1.0)
+  -bg, --bg=COLOR          : Draw a rounded background plate behind the text
+  -bgo, --bg-opacity=NUM   : Plate opacity (0.0 - 1.0, default 0.6)
   -p, --pos=tl|tr|bl|br    : Screen corner position
   -s, --size=NUM           : Set font size
   -x, --x=NUM              : Set window X position (overrides --pos)
