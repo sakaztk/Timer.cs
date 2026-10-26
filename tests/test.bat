@@ -23,6 +23,7 @@ timer %SECONDS% --clock --clickthrough
 timer %SECONDS% --font=consolas --color=red --opacity=0.2
 timer %SECONDS% --invert
 timer %SECONDS% --x=100 --y=100 --size=100
+timer %SECONDS% --exec=notepad.exe
 timer --until=23:00 --speak="Please click the displayed text to close it." --speak-timing=start --speak-voice="Microsoft David Desktop"
 
 
@@ -46,6 +47,7 @@ timer %SECONDS% -cl -ct
 timer %SECONDS% -f=consolas -c=red -o=0.2
 timer %SECONDS% -i
 timer %SECONDS% -x=100 -y=100 -s=100
+timer %SECONDS% -e=notepad.exe
 timer -u=23:00 --sp="Please click the displayed text to close it." --spt=start -spv="Microsoft David Desktop"
 
 popd

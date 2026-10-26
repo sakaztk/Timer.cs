@@ -38,6 +38,7 @@ namespace TimerApp
         public string Pos = "";
         public SystemSound EndSound;
         public string AudioPath;
+        public string ExecCommand;
         public string SpeakText;
         public string SpeakVoice;
         public string SpeakTiming = "end";
@@ -119,6 +120,12 @@ namespace TimerApp
             }, "--sound-file", "-sdf");
             AddValue((o, v) =>
             {
+                if (string.IsNullOrWhiteSpace(v)) return "Empty command for --exec";
+                o.ExecCommand = v;
+                return null;
+            }, "--exec", "-e");
+            AddValue((o, v) =>
+            {
                 o.SpeakText = v;
                 return null;
             }, "--speak", "-sp");
@@ -196,7 +203,7 @@ namespace TimerApp
             var list = new List<string>();
             foreach (var arg in args)
             {
-                if (list.Count > 0 && IsFractionPart(arg))
+                if (list.Count > 0 && IsSplitRemainder(arg))
                 {
                     string previous = list[list.Count - 1];
                     if (previous.StartsWith("-") && previous.IndexOf('=') >= 0)
@@ -210,14 +217,9 @@ namespace TimerApp
             return list.ToArray();
         }
 
-        private static bool IsFractionPart(string text)
+        private static bool IsSplitRemainder(string text)
         {
-            if (text.Length < 2 || text[0] != '.') return false;
-            for (int i = 1; i < text.Length; i++)
-            {
-                if (!char.IsDigit(text[i])) return false;
-            }
-            return true;
+            return text.Length > 1 && text[0] == '.';
         }
 
         private static void AddFlag(Action<Options> apply, params string[] names)
@@ -545,6 +547,8 @@ namespace TimerApp
             }
         }
 
+        private static int _execStarted;
+
         private const int ULW_ALPHA = 2;
         private const byte AC_SRC_OVER = 0;
         private const byte AC_SRC_ALPHA = 1;
@@ -705,6 +709,7 @@ namespace TimerApp
 
             bool soundAtEnd = _o.SoundTiming == "end";
             if (soundAtEnd && _o.EndSound != null) _o.EndSound.Play();
+            RunExec();
 
             bool playAudio = soundAtEnd && _audio != null;
             string text = _o.SpeakText;
@@ -755,6 +760,27 @@ namespace TimerApp
             catch (Exception ex)
             {
                 MessageBox.Show("Audio play error: " + ex.Message, "Sound Error");
+            }
+        }
+
+        private void RunExec()
+        {
+            string command = _o.ExecCommand;
+            if (string.IsNullOrWhiteSpace(command)) return;
+            if (Interlocked.Exchange(ref _execStarted, 1) != 0) return;
+
+            try
+            {
+                var process = Process.Start(new ProcessStartInfo("cmd.exe", "/c \"" + command + "\"")
+                {
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                });
+                if (process != null) process.Dispose();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Exec error: " + ex.Message, "Exec Error");
             }
         }
 
@@ -1306,6 +1332,7 @@ Options:
   -sd, --sound=NAME        : System sound at timer end (Beep, Asterisk, Exclamation, Hand, Question)
   -sdt, --sound-timing=WHEN: When to play sound (start|middle|end, default end)
   -sdf, --sound-file=PATH  : Play an audio file (WAV, MP3, WMA, ...) at the sound timing
+  -e, --exec=COMMAND      : Run a command (via cmd /c) when the timer ends
   -sp, --speak=TEXT        : Speak the specified text using speech synthesis
   -spv, --speak-voice=NAME : Select voice for speech synthesis (use with --speak)
   -spt, --speak-timing=WHEN: When to speak (start|middle|end, default end)
