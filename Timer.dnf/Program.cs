@@ -1291,10 +1291,16 @@ namespace TimerApp
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
-            if (args.Length == 0 || args.Any(a => a.Equals("--help", StringComparison.OrdinalIgnoreCase)
-                                              || a.Equals("-h") || a.Equals("-?")))
+            if (args.Any(a => a.Equals("--help", StringComparison.OrdinalIgnoreCase)
+                      || a.Equals("-h") || a.Equals("-?")))
             {
                 ShowHelp();
+                return;
+            }
+
+            if (args.Length == 0 || args.Any(a => a.Equals("--gui", StringComparison.OrdinalIgnoreCase) || a.Equals("-g")))
+            {
+                Application.Run(new LauncherForm());
                 return;
             }
 
@@ -1331,7 +1337,7 @@ namespace TimerApp
             }
         }
 
-        private static void ShowHelp()
+        internal static void ShowHelp()
         {
             string voices = "";
             try

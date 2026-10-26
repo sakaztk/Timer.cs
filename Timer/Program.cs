@@ -1181,10 +1181,16 @@ namespace TimerApp
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
-            if (args.Length == 0 || args.Any(a => a.Equals("--help", StringComparison.OrdinalIgnoreCase)
-                                              || a.Equals("-h") || a.Equals("-?")))
+            if (args.Any(a => a.Equals("--help", StringComparison.OrdinalIgnoreCase)
+                     || a.Equals("-h") || a.Equals("-?")))
             {
                 ShowHelp();
+                return;
+            }
+            
+            if (args.Length == 0 || args.Any(a => a.Equals("--gui", StringComparison.OrdinalIgnoreCase) || a.Equals("-g")))
+            {
+                Application.Run(new LauncherForm());
                 return;
             }
 
@@ -1217,7 +1223,7 @@ namespace TimerApp
             }
         }
 
-        private static void ShowHelp()
+        internal static void ShowHelp()
         {
             string voices = "";
             try
@@ -1266,6 +1272,7 @@ Options:
   -c, --color=NAME|#RRGGBB : Set text color (name, #RGB, #RRGGBB or #AARRGGBB)
   -e, --exec=COMMAND       : Run a command (via cmd /c) when the timer ends
   -f, --font=NAME          : Set font family
+  -g, --gui                : Show the launcher window
   -h, --help,              : Show this help message
   -i, --invert             : Draw text in the inverted color of the background (Windows 10 2004+)
   -o, --opacity=NUM        : Set window opacity (0.1 - 1.0)
