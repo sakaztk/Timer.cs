@@ -18,6 +18,8 @@ using System.Windows.Forms;
 
 namespace TimerApp
 {
+    internal readonly record struct WarnLevel(double Seconds, Color Color);
+
     internal sealed class Options
     {
         public double Seconds;
@@ -37,6 +39,8 @@ namespace TimerApp
         public SystemSound? EndSound;
         public string? AudioPath;
         public string? ExecCommand;
+        public List<WarnLevel> Warnings = new();
+        public double BlinkSeconds;
         public string? SpeakText;
         public string? SpeakVoice;
         public string SpeakTiming = "end";
@@ -114,6 +118,25 @@ namespace TimerApp
                 o.ExecCommand = v;
                 return null;
             }, "--exec", "-e");
+            AddValue((o, v) =>
+            {
+                int sep = v.LastIndexOf(':');
+                if (sep <= 0 || sep == v.Length - 1) return $"Invalid --warn (TIME:COLOR): {v}";
+
+                string timeText = v.Substring(0, sep);
+                string colorText = v.Substring(sep + 1);
+                if (!TimeSpec.TryParseDuration(timeText, out var seconds)) return $"Invalid time: {timeText}";
+                if (!ColorParser.TryParse(colorText, out var color)) return $"Invalid color: {colorText}";
+
+                o.Warnings.Add(new WarnLevel(seconds, color));
+                return null;
+            }, "--warn", "-w");
+            AddValue((o, v) =>
+            {
+                if (!TimeSpec.TryParseDuration(v, out var seconds)) return $"Invalid time: {v}";
+                o.BlinkSeconds = seconds;
+                return null;
+            }, "--blink", "-b");
             AddValue((o, v) =>
             {
                 o.SpeakText = v;
@@ -503,7 +526,7 @@ namespace TimerApp
             public byte AlphaFormat;
         }
 
-        private readonly record struct FrameState(string Text, Color Color);
+        private readonly record struct FrameState(string Text, Color Color, bool Visible);
 
         private static int _execStarted;
 
@@ -591,7 +614,8 @@ namespace TimerApp
             TopMost = true;
             ShowInTaskbar = false;
 
-            _timer = new System.Windows.Forms.Timer { Interval = (_o.ShowClock && !_o.Invert) ? 1000 : 100 };
+            bool slowTick = _o.ShowClock && !_o.Invert && !(_durationSeconds > 0 && _o.BlinkSeconds > 0);
+            _timer = new System.Windows.Forms.Timer { Interval = slowTick ? 1000 : 100 };
             _timer.Tick += Timer_Tick;
             _timer.Start();
 
@@ -764,7 +788,28 @@ namespace TimerApp
 
         private FrameState GetFrameState()
         {
-            return new FrameState(GetDisplayText(), _o.TextColor);
+            string text = GetDisplayText();
+            if (_durationSeconds <= 0) return new FrameState(text, _o.TextColor, true);
+
+            double remaining = Remaining;
+            bool blinking = _o.BlinkSeconds > 0 && remaining <= _o.BlinkSeconds;
+            bool visible = !blinking || ((long)Math.Floor(remaining * 2) & 1) == 0;
+            return new FrameState(text, ResolveColor(remaining), visible);
+        }
+
+        private Color ResolveColor(double remaining)
+        {
+            var color = _o.TextColor;
+            double threshold = double.MaxValue;
+            foreach (var level in _o.Warnings)
+            {
+                if (remaining <= level.Seconds && level.Seconds < threshold)
+                {
+                    color = level.Color;
+                    threshold = level.Seconds;
+                }
+            }
+            return color;
         }
 
         private string GetDisplayText()
@@ -958,6 +1003,8 @@ namespace TimerApp
 
         private void DrawText(Graphics g, FrameState frame, Font font, Color color)
         {
+            if (!frame.Visible) return;
+
             g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
             var size = g.MeasureString(frame.Text, font);
             float x = (Width - size.Width) / 2f;
@@ -1214,25 +1261,27 @@ Time:
   1:30, 1:02:03    : m:s or h:m:s
 
 Options:
-  -h, --help,              : Show this help message
   -a, --all                : Show timer on all displays
+  -b, --blink=TIME         : Blink the text during the last TIME
   -c, --color=NAME|#RRGGBB : Set text color (name, #RGB, #RRGGBB or #AARRGGBB)
+  -e, --exec=COMMAND       : Run a command (via cmd /c) when the timer ends
   -f, --font=NAME          : Set font family
+  -h, --help,              : Show this help message
+  -i, --invert             : Draw text in the inverted color of the background (Windows 10 2004+)
   -o, --opacity=NUM        : Set window opacity (0.1 - 1.0)
-  -bg, --bg=COLOR          : Draw a rounded background plate behind the text
-  -bgo, --bg-opacity=NUM   : Plate opacity (0.0 - 1.0, default 0.6)
   -p, --pos=tl|tr|bl|br    : Screen corner position
   -s, --size=NUM           : Set font size
+  -u, --until=HH:mm[:ss]   : Count down to the next occurrence of that time of day
+  -w, --warn=TIME:COLOR    : Change text color when the remaining time is TIME or less (repeatable)
   -x, --x=NUM              : Set window X position (overrides --pos)
   -y, --y=NUM              : Set window Y position (overrides --pos)
-  -u, --until=HH:mm[:ss]   : Count down to the next occurrence of that time of day
+  -bg, --bg=COLOR          : Draw a rounded background plate behind the text
+  -bgo, --bg-opacity=NUM   : Plate opacity (0.0 - 1.0, default 0.6)
   -cl, --clock             : Show current time instead of countdown
   -ct, --clickthrough      : Make window ignore mouse clicks
-  -i, --invert             : Draw text in the inverted color of the background (Windows 10 2004+)
   -sd, --sound=NAME        : System sound at timer end (Beep, Asterisk, Exclamation, Hand, Question)
   -sdt, --sound-timing=WHEN: When to play sound (start|middle|end, default end)
   -sdf, --sound-file=PATH  : Play an audio file (WAV, MP3, WMA, ...) at the sound timing
-  -e, --exec=COMMAND       : Run a command (via cmd /c) when the timer ends
   -sp, --speak=TEXT        : Speak the specified text using speech synthesis
   -spv, --speak-voice=NAME : Select voice for speech synthesis (use with --speak)
   -spt, --speak-timing=WHEN: When to speak (start|middle|end, default end)
